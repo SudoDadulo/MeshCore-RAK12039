@@ -1,3 +1,63 @@
+# MeshCore fork – RAK12039/PMSA003I Support
+
+## AI SLOP WARNING! - I needed this for a personal project I just wanted to show that it is possible and you could use this as inspiration for your own implementation. 
+
+## Thank you, MeshCore developers for this amazing project you've built.
+
+## Project overview
+
+This project extends MeshCore environmental sensor support with the **RAK12039 particulate matter sensor**, based on the Plantower PMSA003I, running on a RAK4631 WisBlock platform with the RAK19007 base board.
+
+The implementation provides low-power air-quality monitoring by periodically waking the sensor, allowing its fan to stabilise, collecting particulate matter measurements, and returning it to sleep between measurement cycles.
+
+Sensor readings are integrated into the existing MeshCore environmental telemetry system using CayenneLPP.
+
+## Changelog
+
+- Added RAK12039 / PMSA003I sensor driver integration.
+- Added I²C detection and initialisation at address `0x12`.
+- Added support for 12 telemetry values:
+  - PM1.0, PM2.5 and PM10 – standard particle measurements.
+  - PM1.0, PM2.5 and PM10 – environmental particle measurements.
+  - Particle counts for 0.3, 0.5, 1.0, 2.5, 5.0 and 10.0 µm.
+- Added configurable compile-time support through `ENV_INCLUDE_RAK12039`.
+- Implemented non-blocking sensor wake-up and sleep management.
+- Added a 30-second warm-up period before collecting measurements.
+- Configured a 10-minute wake-up interval.
+- Added measurement caching to prevent unnecessary I²C communication during telemetry requests.
+- Retained the last valid measurement if a subsequent sensor read fails.
+- Kept the sensor supply enabled and used the SET pin to control sleep mode, avoiding power-rail switching and I²C detection problems.
+
+## How it works
+
+At startup, the WisBlock sensor power rail is enabled and the firmware allows the RAK12039 to initialise before scanning the I²C bus.
+
+Once detected and initialised, the sensor starts its first measurement cycle immediately. The firmware waits 30 seconds for the PMSA003I fan and measurement system to stabilise before reading the sensor.
+
+All 12 measurement values are then stored in memory. The firmware pulls the sensor's SET pin LOW to enter sleep mode.
+
+The sensor remains asleep until the next measurement cycle, scheduled 10 minutes after its previous wake-up. The SET pin is then driven HIGH, starting another 30-second warm-up period.
+
+The process repeats continuously without blocking the main MeshCore application loop.
+
+## Telemetry and data handling
+
+MeshCore telemetry requests do not directly communicate with the PMSA003I. Instead, the sensor manager returns the most recently cached measurements.
+
+This means telemetry requests can be handled at any time without waking the sensor, interrupting its measurement schedule, or activating its fan.
+
+If a measurement fails, the previous valid readings are retained rather than being replaced with zero values.
+
+## Design goals
+
+The main objectives of this implementation are:
+
+- Low power consumption through reduced fan operating time.
+- Reliable sensor initialisation and I²C communication.
+- Non-blocking operation that does not interfere with MeshCore.
+- Minimal changes to the existing environmental sensor architecture.
+- Efficient telemetry handling through cached measurements.
+
 ## About MeshCore
 
 MeshCore is a lightweight, portable C++ library that enables multi-hop packet routing for embedded projects using LoRa and other packet radios. It is designed for developers who want to create resilient, decentralized communication networks that work without the internet.
@@ -6,123 +66,3 @@ MeshCore is a lightweight, portable C++ library that enables multi-hop packet ro
 
 MeshCore now supports a range of LoRa devices, allowing for easy flashing without the need to compile firmware manually. Users can flash a pre-built binary using tools like Adafruit ESPTool and interact with the network through a serial console.
 MeshCore provides the ability to create wireless mesh networks, similar to Meshtastic and Reticulum but with a focus on lightweight multi-hop packet routing for embedded projects. Unlike Meshtastic, which is tailored for casual LoRa communication, or Reticulum, which offers advanced networking, MeshCore balances simplicity with scalability, making it ideal for custom embedded solutions, where devices (nodes) can communicate over long distances by relaying messages through intermediate nodes. This is especially useful in off-grid, emergency, or tactical situations where traditional communication infrastructure is unavailable.
-
-## ⚡ Key Features
-
-* Multi-Hop Packet Routing
-  * Devices can forward messages across multiple nodes, extending range beyond a single radio's reach.
-  * Supports up to a configurable number of hops to balance network efficiency and prevent excessive traffic.
-  * Nodes use fixed roles where "Companion" nodes are not repeating messages at all to prevent adverse routing paths from being used.
-* Supports LoRa Radios – Works with Heltec, RAK Wireless, and other LoRa-based hardware.
-* Decentralized & Resilient – No central server or internet required; the network is self-healing.
-* Low Power Consumption – Ideal for battery-powered or solar-powered devices.
-* Simple to Deploy – Pre-built example applications make it easy to get started.
-
-## 🎯 What Can You Use MeshCore For?
-
-* Off-Grid Communication: Stay connected even in remote areas.
-* Emergency Response & Disaster Recovery: Set up instant networks where infrastructure is down.
-* Outdoor Activities: Hiking, camping, and adventure racing communication.
-* Tactical & Security Applications: Military, law enforcement, and private security use cases.
-* IoT & Sensor Networks: Collect data from remote sensors and relay it back to a central location.
-
-## 🚀 How to Get Started
-
-- Watch the [MeshCore QuickStart Playlist](https://www.youtube.com/watch?v=iaFltojJrAc&list=PLshzThxhw4O4WU_iZo3NmNZOv6KMrUuF9) by The Comms Channel
-- Watch the [MeshCore Technical Presentation](https://www.youtube.com/watch?v=OwmkVkZQTf4) by Liam Cottle.
-- Read through our [Frequently Asked Questions](./docs/faq.md) and [Documentation](https://docs.meshcore.io).
-- Flash the MeshCore firmware on a supported device.
-- Connect with a supported client.
-
-For developers:
-
-- Install [PlatformIO](https://docs.platformio.org) in [Visual Studio Code](https://code.visualstudio.com).
-- Clone and open the MeshCore repository in Visual Studio Code.
-- See the example applications you can modify and run:
-  - [Companion Radio](./examples/companion_radio) - For use with an external chat app, over BLE, USB or Wi-Fi.
-  - [KISS Modem](./examples/kiss_modem) - Serial KISS protocol bridge for host applications. ([protocol docs](./docs/kiss_modem_protocol.md))
-  - [Simple Repeater](./examples/simple_repeater) - Extends network coverage by relaying messages.
-  - [Simple Room Server](./examples/simple_room_server) - A simple BBS server for shared Posts.
-  - [Simple Secure Chat](./examples/simple_secure_chat) - Secure terminal based text communication between devices.
-  - [Simple Sensor](./examples/simple_sensor) - Remote sensor node with telemetry and alerting.
-
-The Simple Secure Chat example can be interacted with through the Serial Monitor in Visual Studio Code, or with a Serial USB Terminal on Android.
-
-## ⚡️ MeshCore Flasher
-
-We have prebuilt firmware ready to flash on supported devices.
-
-- Launch https://meshcore.io/flasher
-- Select a supported device
-- Flash one of the firmware types:
-  - Companion, Repeater or Room Server
-- Once flashing is complete, you can connect with one of the MeshCore clients below.
-
-## 📱 MeshCore Clients
-
-**Companion Firmware**
-
-The companion firmware can be connected to via BLE, USB or Wi-Fi depending on the firmware type you flashed.
-
-- Web: https://app.meshcore.nz
-- Android: https://play.google.com/store/apps/details?id=com.liamcottle.meshcore.android
-- iOS: https://apps.apple.com/us/app/meshcore/id6742354151?platform=iphone
-- NodeJS: https://github.com/liamcottle/meshcore.js
-- Python: https://github.com/fdlamotte/meshcore-cli
-
-**Repeater and Room Server Firmware**
-
-The repeater and room server firmware can be set up via USB in the web config tool.
-
-- https://config.meshcore.io
-
-They can also be managed via LoRa in the mobile app by using the Remote Management feature.
-
-## 🛠 Hardware Compatibility
-
-MeshCore is designed for devices listed in the [MeshCore Flasher](https://meshcore.io/flasher)
-
-## 📜 License
-
-MeshCore is open-source software released under the MIT License. You are free to use, modify, and distribute it for personal and commercial projects.
-
-## Contributing
-
-Please submit PR's using 'dev' as the base branch!
-For minor changes just submit your PR and we'll try to review it, but for anything more 'impactful' please open an Issue first and start a discussion. It is better to sound out what it is you want to achieve first, and try to come to a consensus on what the best approach is, especially when it impacts the structure or architecture of this codebase.
-
-Here are some general principles you should try to adhere to:
-* Keep it simple. Please, don't think like a high-level lang programmer. Think embedded, and keep code concise, without any unnecessary layers.
-* No dynamic memory allocation, except during setup/begin functions.
-* Use the same brace and indenting style that's in the core source modules. (A .clang-format is probably going to be added soon, but please do NOT retroactively re-format existing code. This just creates unnecessary diffs that make finding problems harder)
-
-Help us prioritize! Please react with thumbs-up to issues/PRs you care about most. We look at reaction counts when planning work.
-
-### Running unit tests
-
-To run unit tests, run the following command:
-
-```bash
-pio test --environment native --verbose
-```
-
-## Road-Map / To-Do
-
-There are a number of fairly major features in the pipeline, with no particular time-frames attached yet. In very rough chronological order:
-- [X] Companion radio: UI redesign
-- [X] Repeater + Room Server: add ACL's (like Sensor Node has)
-- [X] Standardise Bridge mode for repeaters
-- [ ] Repeater/Bridge: Standardise the Transport Codes for zoning/filtering
-- [X] Core + Repeater: enhanced zero-hop neighbour discovery
-- [ ] Core: round-trip manual path support
-- [ ] Companion + Apps: support for multiple sub-meshes (and 'off-grid' client repeat mode)
-- [ ] Core + Apps: support for LZW message compression
-- [ ] Core: dynamic CR (Coding Rate) for weak vs strong hops
-- [ ] Core: new framework for hosting multiple virtual nodes on one physical device
-- [ ] V2 protocol spec: discussion and consensus around V2 packet protocol, including path hashes, new encryption specs, etc
-
-## 📞 Get Support
-
-- Report bugs and request features on the [GitHub Issues](https://github.com/meshcore-dev/meshcore/issues) page.
-- Find additional guides and components on [my site](https://buymeacoffee.com/ripplebiz).
-- Join [MeshCore Discord](https://meshcore.gg) to chat with the developers and get help from the community.

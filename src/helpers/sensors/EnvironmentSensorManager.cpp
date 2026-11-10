@@ -164,6 +164,16 @@ static Adafruit_VL53L0X VL53L0X;
 #endif
 #include "RAK12039_PMSA003I.h"
 static RAK_PMSA003I PMSA003I(TELEM_RAK12039_ADDRESS);
+enum RAK12039_State {
+    RAK12039_WARMING_UP,
+    RAK12039_SLEEPING
+};
+
+static RAK12039_State rak12039_state = RAK12039_WARMING_UP;
+static uint32_t rak12039_wakeup_time = 0;
+
+static PMSA_Data_t rak12039_cached_data;
+static bool rak12039_data_valid = false;
 #endif
 
 #if ENV_INCLUDE_RAK12035
@@ -461,36 +471,83 @@ static void query_bmp085(uint8_t ch, uint8_t, CayenneLPP& lpp) {
 
 #if ENV_INCLUDE_RAK12039
 static uint8_t init_rak12039(TwoWire* wire, uint8_t addr) {
-  return PMSA003I.begin(*wire, addr) ? 12 : 0;
+    if (!PMSA003I.begin(*wire, addr)) {
+        return 0;
+    }
+
+    // Keep the sensor awake for its initial measurement.
+    pinMode(WB_IO6, OUTPUT);
+    digitalWrite(WB_IO6, HIGH);
+
+    rak12039_state = RAK12039_WARMING_UP;
+    rak12039_wakeup_time = millis();
+    rak12039_data_valid = false;
+
+    return 12;
 }
 
-static void query_rak12039(uint8_t ch, uint8_t sub_ch, CayenneLPP& lpp) {  
-  PMSA_Data_t data;  
-  
-  if (PMSA003I.readDate(&data)) {  
+static void update_rak12039() {
+    uint32_t now = millis();
+
+    if (rak12039_state == RAK12039_WARMING_UP) {
+
+        // Wait at least 30 seconds after waking the sensor.
+        if (now - rak12039_wakeup_time >= 30000UL) {
+
+            PMSA_Data_t new_data;
+
+            if (PMSA003I.readDate(&new_data)) {
+                rak12039_cached_data = new_data;
+                rak12039_data_valid = true;
+
+                MESH_DEBUG_PRINTLN("RAK12039: Measurement updated");
+            } else {
+                MESH_DEBUG_PRINTLN("RAK12039: Measurement failed");
+            }
+
+            // Put the sensor into sleep mode.
+            digitalWrite(WB_IO6, LOW);
+            rak12039_state = RAK12039_SLEEPING;
+        }
+    }
+    else if (rak12039_state == RAK12039_SLEEPING) {
+
+        // Wake the sensor every 10 minutes.
+        if (now - rak12039_wakeup_time >= 600000UL) {
+
+            digitalWrite(WB_IO6, HIGH);
+
+            // Start a new 30-second warm-up period.
+            rak12039_wakeup_time = now;
+            rak12039_state = RAK12039_WARMING_UP;
+
+            MESH_DEBUG_PRINTLN("RAK12039: Waking sensor");
+        }
+    }
+}
+
+static void query_rak12039(uint8_t ch, uint8_t sub_ch, CayenneLPP& lpp) {
+
+  if (rak12039_data_valid) {
+    const PMSA_Data_t& data = rak12039_cached_data;
+
     switch (sub_ch) {
-      // Standard Particulate Matter (µg/m3)
-      case 0:  lpp.addGenericSensor(ch, data.pm10_standard); break;   // PM1.0 Standard
-      case 1:  lpp.addGenericSensor(ch, data.pm25_standard); break;   // PM2.5 Standard
-      case 2:  lpp.addGenericSensor(ch, data.pm100_standard); break;  // PM10.0 Standard
-      
-      // Environmental Particulate Matter (µg/m3)
-      case 3:  lpp.addGenericSensor(ch, data.pm10_env); break;        // PM1.0 Environmental
-      case 4:  lpp.addGenericSensor(ch, data.pm25_env); break;        // PM2.5 Environmental
-      case 5:  lpp.addGenericSensor(ch, data.pm100_env); break;       // PM10.0 Environmental
-      
-      // Particle Counts (Count per 0.1L of air)
-      case 6:  lpp.addGenericSensor(ch, data.particles_03um); break;  // Particles > 0.3 µm
-      case 7:  lpp.addGenericSensor(ch, data.particles_05um); break;  // Particles > 0.5 µm
-      case 8:  lpp.addGenericSensor(ch, data.particles_10um); break;  // Particles > 1.0 µm
-      case 9:  lpp.addGenericSensor(ch, data.particles_25um); break;  // Particles > 2.5 µm
-      case 10: lpp.addGenericSensor(ch, data.particles_50um); break;  // Particles > 5.0 µm
-      case 11: lpp.addGenericSensor(ch, data.particles_100um); break; // Particles > 10.0 µm
-      
+      case 0:  lpp.addGenericSensor(ch, data.pm10_standard); break;
+      case 1:  lpp.addGenericSensor(ch, data.pm25_standard); break;
+      case 2:  lpp.addGenericSensor(ch, data.pm100_standard); break;
+      case 3:  lpp.addGenericSensor(ch, data.pm10_env); break;
+      case 4:  lpp.addGenericSensor(ch, data.pm25_env); break;
+      case 5:  lpp.addGenericSensor(ch, data.pm100_env); break;
+      case 6:  lpp.addGenericSensor(ch, data.particles_03um); break;
+      case 7:  lpp.addGenericSensor(ch, data.particles_05um); break;
+      case 8:  lpp.addGenericSensor(ch, data.particles_10um); break;
+      case 9:  lpp.addGenericSensor(ch, data.particles_25um); break;
+      case 10: lpp.addGenericSensor(ch, data.particles_50um); break;
+      case 11: lpp.addGenericSensor(ch, data.particles_100um); break;
       default: break;
     }
-  }  
-}  
+  }
+}
 #endif
 
 #if ENV_INCLUDE_RAK12035
@@ -985,7 +1042,7 @@ void EnvironmentSensorManager::stop_gps() {
 }
 #endif // ENV_INCLUDE_GPS
 
-#if ENV_INCLUDE_GPS || defined(ENV_INCLUDE_BME680_BSEC)
+#if ENV_INCLUDE_GPS || defined(ENV_INCLUDE_BME680_BSEC) || ENV_INCLUDE_RAK12039
 void EnvironmentSensorManager::loop() {
 
   #if ENV_INCLUDE_GPS
@@ -1039,5 +1096,9 @@ void EnvironmentSensorManager::loop() {
     }
   }
   #endif  // ENV_INCLUDE_BME680_BSEC
+  #if ENV_INCLUDE_RAK12039
+    update_rak12039();
+  #endif
+
 }
-#endif // ENV_INCLUDE_GPS || ENV_INCLUDE_BME680_BSEC
+#endif // ENV_INCLUDE_GPS || ENV_INCLUDE_BME680_BSEC || ENV_INCLUDE_RAK12039
