@@ -2,6 +2,12 @@
 
 #include <Wire.h>
 
+// RAK12039 PMSA003I support is enabled unconditionally for this initial
+// always-on test implementation. It can be moved behind a build flag later.
+#ifndef ENV_INCLUDE_RAK12039
+#define ENV_INCLUDE_RAK12039 1
+#endif
+
 #if ENV_PIN_SDA && ENV_PIN_SCL
 #define TELEM_WIRE &Wire1  // Use Wire1 as the I2C bus for Environment Sensors
 #else
@@ -150,6 +156,14 @@ static Adafruit_MLX90614 MLX90614;
 #endif
 #include <Adafruit_VL53L0X.h>
 static Adafruit_VL53L0X VL53L0X;
+#endif
+
+#if ENV_INCLUDE_RAK12039
+#ifndef TELEM_RAK12039_ADDRESS
+#define TELEM_RAK12039_ADDRESS 0x12
+#endif
+#include "RAK12039_PMSA003I.h"
+static RAK_PMSA003I PMSA003I(TELEM_RAK12039_ADDRESS);
 #endif
 
 #if ENV_INCLUDE_RAK12035
@@ -445,6 +459,40 @@ static void query_bmp085(uint8_t ch, uint8_t, CayenneLPP& lpp) {
 }
 #endif
 
+#if ENV_INCLUDE_RAK12039
+static uint8_t init_rak12039(TwoWire* wire, uint8_t addr) {
+  return PMSA003I.begin(*wire, addr) ? 12 : 0;
+}
+
+static void query_rak12039(uint8_t ch, uint8_t sub_ch, CayenneLPP& lpp) {  
+  PMSA_Data_t data;  
+  
+  if (PMSA003I.readDate(&data)) {  
+    switch (sub_ch) {
+      // Standard Particulate Matter (µg/m3)
+      case 0:  lpp.addGenericSensor(ch, data.pm10_standard); break;   // PM1.0 Standard
+      case 1:  lpp.addGenericSensor(ch, data.pm25_standard); break;   // PM2.5 Standard
+      case 2:  lpp.addGenericSensor(ch, data.pm100_standard); break;  // PM10.0 Standard
+      
+      // Environmental Particulate Matter (µg/m3)
+      case 3:  lpp.addGenericSensor(ch, data.pm10_env); break;        // PM1.0 Environmental
+      case 4:  lpp.addGenericSensor(ch, data.pm25_env); break;        // PM2.5 Environmental
+      case 5:  lpp.addGenericSensor(ch, data.pm100_env); break;       // PM10.0 Environmental
+      
+      // Particle Counts (Count per 0.1L of air)
+      case 6:  lpp.addGenericSensor(ch, data.particles_03um); break;  // Particles > 0.3 µm
+      case 7:  lpp.addGenericSensor(ch, data.particles_05um); break;  // Particles > 0.5 µm
+      case 8:  lpp.addGenericSensor(ch, data.particles_10um); break;  // Particles > 1.0 µm
+      case 9:  lpp.addGenericSensor(ch, data.particles_25um); break;  // Particles > 2.5 µm
+      case 10: lpp.addGenericSensor(ch, data.particles_50um); break;  // Particles > 5.0 µm
+      case 11: lpp.addGenericSensor(ch, data.particles_100um); break; // Particles > 10.0 µm
+      
+      default: break;
+    }
+  }  
+}  
+#endif
+
 #if ENV_INCLUDE_RAK12035
 static uint8_t init_rak12035(TwoWire* wire, uint8_t addr) {
   // RAK12035 requires setup() before begin().
@@ -605,6 +653,9 @@ static const SensorDef SENSOR_TABLE[] = {
 #ifdef ENV_INCLUDE_BMP085
   { 0x77,                  "BMP085",       init_bmp085,   query_bmp085   },
 #endif
+#if ENV_INCLUDE_RAK12039
+  { TELEM_RAK12039_ADDRESS,"RAK12039 PMSA003I", init_rak12039, query_rak12039 },
+#endif
 #if ENV_INCLUDE_RAK12035
   { TELEM_RAK12035_ADDRESS,"RAK12035",     init_rak12035, query_rak12035 },
 #endif
@@ -640,6 +691,17 @@ bool EnvironmentSensorManager::begin() {
   Wire1.begin(ENV_PIN_SDA, ENV_PIN_SCL, 100000);
     #endif
   MESH_DEBUG_PRINTLN("Second I2C initialized on pins SDA: %d SCL: %d", ENV_PIN_SDA, ENV_PIN_SCL);
+  #endif
+
+  #ifdef ENV_INCLUDE_RAK12039
+    MESH_DEBUG_PRINTLN("Powering up WisBlock sensor rail and waiting for RAK12039 motor spin-up...");
+
+    // Enable 3V3_S sensor power rail on RAK19007
+    pinMode(WB_IO2, OUTPUT);
+    digitalWrite(WB_IO2, HIGH);
+
+    // Allow the PMSA003I fan to spin up
+    delay(4000);
   #endif
 
   // Scan the I2C bus before touching any sensor library.
